@@ -4,16 +4,23 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { handleChat } from "./src/chat";
-import { llmSummary } from "./src/llm";
-import { ChatRequestBody } from "./src/types";
+import { handleChat, PersonScraper } from "./src/chat";
+import { llmSummary, summarizePersonInfo } from "./src/llm";
+import {
+  ChatRequestBody,
+  IdentifyRequestBody,
+  IdentifyResponseBody,
+} from "./src/types";
+import { downloadSong } from "./src/music_responce";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 8787;
 const CLIENT_ROOT = path.resolve(__dirname, "../client");
-const MAX_BODY_BYTES = 8 * 1024; // a spoken/typed message is short; refuse anything absurd
+const DOWNLOADS_ROOT = path.resolve(process.cwd(), "downloads");
+const MAX_BODY_BYTES = 8 * 1024;
+const MAX_IMAGE_BYTES = 6 * 1024 * 1024; // a spoken/typed message is short; refuse anything absurd
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
