@@ -20,7 +20,6 @@ export function createSpeechController({ onInterim, onFinal, onListeningChange }
   function safeStartRecognition() {
     if (!recognition || actuallyRecognizing) return;
     if (!userWantsListening || isSpeaking) return;
-    if (Date.now() - lastSpeakEndTime < 800) return;
 
     try {
       recognition.start();
@@ -153,7 +152,7 @@ export function createSpeechController({ onInterim, onFinal, onListeningChange }
           safeStartRecognition();
         }
         onEnd?.();
-      }, 700);
+      }, 800);
     };
 
     utterance.onend = finish;

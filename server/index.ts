@@ -8,7 +8,9 @@ import { handleChat } from "./src/chat";
 import { PersonScraper } from "./src/chat";
 import { llmSummary, summarizePersonInfo } from "./src/llm";
 import { ChatRequestBody, IdentifyRequestBody, IdentifyResponseBody } from "./src/types";
+import dns from "node:dns";
 
+dns.setDefaultResultOrder("ipv4first");
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 

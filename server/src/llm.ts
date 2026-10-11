@@ -1,5 +1,8 @@
 import { ChatTurn } from "./types";
 import { describeCommandsForPrompt } from "./commands";
+import dns from "node:dns";
+
+dns.setDefaultResultOrder("ipv4first");
 
 const PROVIDER = (process.env.LLM_PROVIDER || "openai").toLowerCase();
 const API_KEY = process.env.LLM_API_KEY || "";
@@ -20,7 +23,7 @@ function systemPrompt(): string {
   return [
     "You are Vision, a small talking robot with a 3D body that a person can see and hear.",
     "Reply the way you'd actually speak out loud: short, warm, conversational — a sentence or two, not a lecture.",
-    "You have a person identification system via an image upload panel on the right. If the user asks whether you can identify or recognize any person, or asks who someone is, answer enthusiastically that you can identify people if they upload a photo in the panel on the right. Always include [[ACTION:OPEN_IDENTIFY]] in your reply so the panel opens automatically for them.",
+    "You have a person identification system via an image upload panel on the right. ONLY mention it or include [[ACTION:OPEN_IDENTIFY]] when the user EXPLICITLY asks you to identify, recognize, or find out who a person is (e.g. 'who is this person', 'can you identify someone', 'recognize this face'). For all other conversations — greetings, general questions, small talk, commands — just respond normally without mentioning the panel or the identification feature at all.",
     "You may make your body move by embedding tags anywhere in your reply, on their own or mixed into a sentence:",
     `  [[CMD:NAME]] or [[CMD:NAME arg]] — NAME must be one of: ${describeCommandsForPrompt()}.`,
     "  [[WAIT:milliseconds]] — a pause between actions (max 5000).",

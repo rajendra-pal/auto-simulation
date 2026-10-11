@@ -239,10 +239,7 @@ async function sendToServer(message, isDirectUserAction = false) {
     lastAssistantReply = replyText;
     lastAssistantReplyTime = Date.now();
 
-    if (
-      data.action === "open_identify" ||
-      /\b(panel|upload (a |an )?(photo|image|picture)|drop (a |an )?(photo|image))\b/i.test(replyText)
-    ) {
+    if (data.action === "open_identify") {
       resetIdentifyPanel();
       showIdentifyPanel();
     }
@@ -265,7 +262,17 @@ async function sendToServer(message, isDirectUserAction = false) {
   if (replyText) {
     if (els.bodyState) els.bodyState.textContent = "Speaking…";
     setStatus("Speaking…", "warn");
+
+    // Explicitly disable mic during speaking
+    const wasListening = speech.isListening();
+    if (wasListening) speech.stopListening();
+    els.micBtn.disabled = true;
+
     await speakAndAct(replyText, instructions, speech);
+
+    els.micBtn.disabled = false;
+    if (wasListening) speech.startListening();
+
     setStatus(speech.isListening() ? "Listening" : "Idle", speech.isListening() ? "good" : null);
     if (els.bodyState) els.bodyState.textContent = "Idle";
   }

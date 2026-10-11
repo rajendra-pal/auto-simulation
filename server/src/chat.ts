@@ -1,12 +1,17 @@
 import { ChatResponseBody, ChatTurn } from "./types";
 import { matchDirectCommand, extractCommands } from "./commands";
 import { askLlm, summarizePersonInfo } from "./llm";
+import dns from "node:dns";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import axios from "axios";
 import FormData from "form-data";
+
+// Prefer IPv4 over IPv6 for DNS resolution — fixes ETIMEDOUT on ImgBB API
+// where IPv6 routes may be unavailable or rate-limited.
+dns.setDefaultResultOrder("ipv4first");
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -80,6 +85,8 @@ export class PersonScraper {
     }
 
     try {
+      console.log(`[uploadToImgBB] host=api.imgbb.com, path=${imagePath}, start=${new Date().toISOString()}`);
+      const start = Date.now();
       const formData = new FormData();
       formData.append('image', fs.createReadStream(imagePath));
 
@@ -90,7 +97,9 @@ export class PersonScraper {
         headers: {
           ...formData.getHeaders(),
         },
+        family: 4, // Force IPv4 to bypass ETIMEDOUT when routing IPv6 fails
       });
+      console.log(`[uploadToImgBB] success after ${Date.now()-start}ms`);
 
       if (response.data.success) {
         return response.data.data.url;
@@ -98,6 +107,7 @@ export class PersonScraper {
         throw new Error(`ImgBB upload failed: ${JSON.stringify(response.data.error)}`);
       }
     } catch (error: any) {
+      console.error(`[uploadToImgBB] error code=${error.code || 'none'}, msg=${error.message}, elapsed=${Date.now()-start}ms`);
       if (error.response && error.response.data) {
         throw new Error(`ImgBB API Error: ${JSON.stringify(error.response.data.error)}`);
       }
@@ -304,11 +314,7 @@ export async function handleChat(rawMessage: string, rawHistory: ChatTurn[] | un
   }
 
   const { text, instructions, action: parsedAction } = extractCommands(result.text);
-  const action =
-    parsedAction ||
-    (/\b(panel|upload (a |an )?(photo|image|picture)|drop (a |an )?(photo|image))\b/i.test(text)
-      ? "open_identify"
-      : undefined);
+  const action = parsedAction;
 
   console.log(`[chat] LLM ok (${instructions.length} cmd(s)): "${text.slice(0, 80)}${text.length > 80 ? "…" : ""}"`);
   return { reply: text || "…", instructions, source: "llm", ...(action ? { action } : {}) };
