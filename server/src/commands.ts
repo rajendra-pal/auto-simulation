@@ -16,7 +16,7 @@ const ARG_BOUNDS: Partial<Record<CommandType, [number, number]>> = {
 };
 
 /** Commands that take a free-text string argument instead of a number. */
-const STRING_ARG_COMMANDS: ReadonlySet<CommandType> = new Set(["AUDIO_SPEAK"]);
+const STRING_ARG_COMMANDS: ReadonlySet<CommandType> = new Set(["AUDIO_SPEAK", "PLAY_MUSIC"]);
 
 const MAX_INSTRUCTIONS_PER_TURN = 12;
 const MAX_WAIT_MS = 5000;
@@ -29,10 +29,9 @@ function sanitizeArg(command: CommandType, rawArg: string | undefined): number |
   if (rawArg === undefined) return undefined;
 
   if (STRING_ARG_COMMANDS.has(command)) {
-    // Strip surrounding quotes and hard-cap length so a runaway LLM reply
-    // can't turn into an enormous speech-bubble string.
     const text = rawArg.replace(/^"|"$/g, "").trim();
-    return text.slice(0, 200) || undefined;
+    const maxLen = command === "PLAY_MUSIC" ? 400 : 200;
+    return text.slice(0, maxLen) || undefined;
   }
 
   const n = Number(rawArg);
@@ -68,7 +67,7 @@ export function extractCommands(raw: string): { text: string; instructions: Inst
 
       const parts = body.trim().split(/\s+/);
       const commandRaw = (parts.shift() || "").toUpperCase();
-      if (!isCommandType(commandRaw)) return ""; // not on the safelist — dropped
+      if (!isCommandType(commandRaw)) return "";
 
       const arg = sanitizeArg(commandRaw, parts.length ? parts.join(" ") : undefined);
       instructions.push(arg === undefined ? { op: "EXEC", command: commandRaw } : { op: "EXEC", command: commandRaw, arg });
@@ -87,8 +86,6 @@ interface DirectMatch {
   instructions: Instruction[];
 }
 
-// Order matters — first match wins, so more specific phrases (e.g. the
-// emergency stop) are listed before the generic ones they could overlap with.
 const DIRECT_COMMANDS: DirectMatch[] = [
   {
     test: /^emergency stop$/,
@@ -102,33 +99,38 @@ const DIRECT_COMMANDS: DirectMatch[] = [
   },
   {
     test: /^dance( for me)?!?$/,
-    reply: "Let's dance!",
-    instructions: [{ op: "EXEC", command: "DANCE", arg: 2500 }],
+    reply: "Let's dance! Say Vision, stop when you want me to halt.",
+    instructions: [{ op: "EXEC", command: "DANCE" }],
   },
   {
-    test: /^(stop|stop dancing|stop moving|halt|freeze)$/,
+    test: /^(stop music|stop the music|stop song|stop the song)$/,
+    reply: "Stopping the music.",
+    instructions: [{ op: "EXEC", command: "STOP_MUSIC" }, { op: "EXEC", command: "WALK_STOP" }],
+  },
+  {
+    test: /^(stop|stop dancing|stop moving|stop walking|halt|freeze|stand still)$/,
     reply: "Stopping.",
-    instructions: [{ op: "EXEC", command: "WALK_STOP" }, { op: "EXEC", command: "DANCE", arg: 1 }],
+    instructions: [{ op: "EXEC", command: "STOP_MUSIC" }, { op: "EXEC", command: "WALK_STOP" }],
   },
   {
-    test: /^walk forward$/,
-    reply: "Walking forward.",
-    instructions: [{ op: "EXEC", command: "WALK_FORWARD", arg: 1500 }],
+    test: /^(walk|go|move)(\s+)?(forward|straight|ahead)$/,
+    reply: "Walking forward. Say Vision, stop when you want me to halt.",
+    instructions: [{ op: "EXEC", command: "WALK_FORWARD" }],
   },
   {
-    test: /^(walk backward|walk back)$/,
-    reply: "Walking backward.",
-    instructions: [{ op: "EXEC", command: "WALK_BACKWARD", arg: 1500 }],
+    test: /^(walk|go|move)(\s+)?(backward|back|backwards)$/,
+    reply: "Walking backward. Say Vision, stop when you want me to halt.",
+    instructions: [{ op: "EXEC", command: "WALK_BACKWARD" }],
   },
   {
-    test: /^turn left$/,
+    test: /^(turn|rotate|spin)?\s*left$/,
     reply: "Turning left.",
-    instructions: [{ op: "EXEC", command: "TURN_LEFT", arg: 700 }],
+    instructions: [{ op: "EXEC", command: "TURN_LEFT", arg: 600 }],
   },
   {
-    test: /^turn right$/,
+    test: /^(turn|rotate|spin)?\s*right$/,
     reply: "Turning right.",
-    instructions: [{ op: "EXEC", command: "TURN_RIGHT", arg: 700 }],
+    instructions: [{ op: "EXEC", command: "TURN_RIGHT", arg: 600 }],
   },
   {
     test: /^look left$/,
@@ -159,13 +161,6 @@ const DIRECT_COMMANDS: DirectMatch[] = [
 
 const WAKE_WORD = /^\s*vision[,!.]?\s+/i;
 
-/**
- * Fast path: phrases that start with the wake word "Vision" and match a
- * known imperative are handled instantly, with no round trip to an LLM at
- * all — e.g. "Vision, dance" or "Vision turn left".
- * Returns null if the phrase doesn't start with the wake word, or doesn't
- * match anything, so the caller can fall through to the LLM.
- */
 export function matchDirectCommand(message: string): { reply: string; instructions: Instruction[] } | null {
   if (!WAKE_WORD.test(message)) return null;
   const rest = message.replace(WAKE_WORD, "").trim().toLowerCase().replace(/[.!?]+$/, "");
@@ -174,6 +169,40 @@ export function matchDirectCommand(message: string): { reply: string; instructio
       return { reply: candidate.reply, instructions: candidate.instructions };
     }
   }
+  return null;
+}
+
+/**
+ * Detect "play <song>" / "play <song> and dance" (with or without wake word).
+ */
+export function matchMusicRequest(message: string): { song: string; dance: boolean } | null {
+  let text = message.trim();
+  text = text.replace(WAKE_WORD, "").trim();
+
+  const danceSuffix = /\s+(and|then|&)\s+dance(\s+for\s+me)?\s*[.!?]*$/i;
+  let dance = false;
+  if (danceSuffix.test(text)) {
+    dance = true;
+    text = text.replace(danceSuffix, "").trim();
+  }
+
+  const dancePrefix = /^(play\s+and\s+dance(\s+to)?|dance\s+to)\s+/i;
+  if (dancePrefix.test(text)) {
+    dance = true;
+    text = text.replace(dancePrefix, "").trim();
+  }
+
+  const playMatch = text.match(/^(?:play(?:\s+me)?(?:\s+the)?(?:\s+song)?)\s+(.+)$/i);
+  if (playMatch) {
+    let song = playMatch[1].trim().replace(/[.!?]+$/, "").trim();
+    song = song.replace(/\s+song$/i, "").trim();
+    if (song.length >= 1) return { song, dance };
+  }
+
+  if (dance && text.length >= 1 && !/^(play|stop)/i.test(text)) {
+    return { song: text.replace(/[.!?]+$/, "").trim(), dance: true };
+  }
+
   return null;
 }
 

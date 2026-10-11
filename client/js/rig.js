@@ -1,25 +1,19 @@
-// Vision's 3D rig — ported from the sibling `compiler` project's
-// simulator.html. Same parse-OBJ-by-hand + three.js r128 rendering approach,
-// same setEyeAngle/setBodyTurn/setWalking/setDancing/setStopped API, just
-// loading the model from a real file instead of an inlined <script> tag,
-// and with no compiled-program player attached — the caller (client.js)
-// drives it live.
-
 export const Rig = (function () {
   const mount = document.getElementById("stage3d");
   const loadingEl = document.getElementById("modelLoading");
 
   let scene, camera, renderer, root, model;
+  let groundGrid = null, groundFloor = null, groundCell = 1;
   let radius = 1;
   let modelHeight = 1;
-  const view = { theta: 0, phi: Math.PI * 0.48, dist: 3 };
+  const view = { theta: 0, phi: Math.PI * 0.31, dist: 3 };
   const target = new THREE.Vector3();
   let t = 0;
 
-  const mode = { walking: false, dancing: false, stopped: false };
+  const mode = { walking: false, walkDir: 1, dancing: false, stopped: false };
   let bodyTurnDeg = 0;
   let eyeAngleDeg = 90;
-  let idleNudgeDeg = 0; // subtle extra offset while the mic hears someone talking
+  let idleNudgeDeg = 0;
 
   function parseOBJ(text) {
     const lines = text.split("\n");
@@ -32,7 +26,6 @@ export const Rig = (function () {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (line.charCodeAt(0) === 118 && line.charCodeAt(1) === 32) {
-        // "v "
         const p = line.trim().split(/\s+/);
         const vx = parseFloat(p[1]), vy = parseFloat(p[2]), vz = parseFloat(p[3]);
         positions.push(vx, vy, vz);
@@ -44,7 +37,6 @@ export const Rig = (function () {
           colors.push(0.75, 0.75, 0.75);
         }
       } else if (line.charCodeAt(0) === 102 && line.charCodeAt(1) === 32) {
-        // "f "
         const f = line.trim().split(/\s+/);
         for (let k = 1; k < f.length; k++) faces.push(parseInt(f[k].split("/")[0], 10) - 1);
       }
@@ -100,6 +92,18 @@ export const Rig = (function () {
     renderer.setSize(mount.clientWidth, mount.clientHeight);
   }
 
+  function updateInfiniteGround() {
+    if (!groundGrid) return;
+    const gx = Math.round(root.position.x / groundCell) * groundCell;
+    const gz = Math.round(root.position.z / groundCell) * groundCell;
+    groundGrid.position.x = gx;
+    groundGrid.position.z = gz;
+    if (groundFloor) {
+      groundFloor.position.x = gx;
+      groundFloor.position.z = gz;
+    }
+  }
+
   function loop() {
     requestAnimationFrame(loop);
     t += 0.016;
@@ -107,18 +111,43 @@ export const Rig = (function () {
     if (model && !mode.stopped) {
       let bob = 0, sway = 0, lean = 0;
       if (mode.dancing) {
-        bob = Math.abs(Math.sin(t * 7.8)) * radius * 0.09;
-        sway = Math.sin(t * 7.8) * 0.22;
-        lean = Math.sin(t * 3.9) * 0.09;
+        const beat = t * 6.2;
+        const half = t * 3.1;
+        const double = t * 12.4;
+        const bounce = Math.abs(Math.sin(beat));
+        bob = (0.55 * bounce + 0.25 * Math.abs(Math.sin(double)) + 0.12) * radius * 0.11;
+        sway = Math.sin(beat) * 0.28 + Math.sin(half) * 0.10;
+        lean = Math.sin(half * 1.15) * 0.14 + Math.sin(double) * 0.04;
+        const danceYaw = Math.sin(beat * 0.5) * 0.18 + Math.sin(double) * 0.05;
+        root.position.x += Math.sin(half) * radius * 0.006;
+        root.position.z += Math.cos(half * 1.3) * radius * 0.005;
+        const eyeYaw = ((eyeAngleDeg + idleNudgeDeg - 90) / 90) * 0.28;
+        root.rotation.y = Math.PI + (bodyTurnDeg * Math.PI) / 180 + danceYaw + eyeYaw * 0.25;
       } else if (mode.walking) {
-        bob = Math.abs(Math.sin(t * 8.5)) * radius * 0.035;
-        sway = Math.sin(t * 4.25) * 0.035;
+        const step = t * 5.2;
+        const stepSin = Math.sin(step);
+        const stepAbs = Math.abs(stepSin);
+        bob = Math.pow(stepAbs, 0.65) * radius * 0.13;
+        sway = stepSin * 0.20;
+        lean = Math.cos(step) * 0.10;
+        const yaw = (bodyTurnDeg * Math.PI) / 180;
+        const speed = radius * (0.038 + 0.012 * stepAbs) * mode.walkDir;
+        root.position.x += Math.sin(yaw) * speed + Math.cos(yaw) * stepSin * radius * 0.008;
+        root.position.z += Math.cos(yaw) * speed - Math.sin(yaw) * stepSin * radius * 0.008;
+        const eyeYaw = ((eyeAngleDeg + idleNudgeDeg - 90) / 90) * 0.28;
+        const walkYawWiggle = stepSin * 0.09;
+        root.rotation.y = Math.PI + (bodyTurnDeg * Math.PI) / 180 + eyeYaw * 0.4 + walkYawWiggle;
+      } else {
+        const eyeYaw = ((eyeAngleDeg + idleNudgeDeg - 90) / 90) * 0.28;
+        root.rotation.y = Math.PI + (bodyTurnDeg * Math.PI) / 180 + eyeYaw * 0.4;
       }
-      const eyeYaw = ((eyeAngleDeg + idleNudgeDeg - 90) / 90) * 0.28;
-      root.rotation.y = Math.PI + (bodyTurnDeg * Math.PI) / 180 + eyeYaw * 0.4;
       root.rotation.z = sway;
       root.rotation.x = lean;
       root.position.y = bob;
+      target.x = root.position.x;
+      target.z = root.position.z;
+      updateInfiniteGround();
+      updateCamera();
     } else if (model && mode.stopped) {
       root.rotation.z *= 0.9;
       root.rotation.x *= 0.9;
@@ -166,10 +195,12 @@ export const Rig = (function () {
       root.add(model);
 
       const gridSize = 80, gridDivs = 80;
+      groundCell = gridSize / gridDivs;
       const grid = new THREE.GridHelper(gridSize, gridDivs, 0x2e2e32, 0x18181a);
       const mats = Array.isArray(grid.material) ? grid.material : [grid.material];
       mats.forEach((m) => { m.transparent = true; m.opacity = 0.9; m.depthWrite = false; });
       scene.add(grid);
+      groundGrid = grid;
 
       const floorGeo = new THREE.PlaneGeometry(gridSize * 2, gridSize * 2);
       floorGeo.rotateX(-Math.PI / 2);
@@ -177,9 +208,12 @@ export const Rig = (function () {
       const floorMesh = new THREE.Mesh(floorGeo, floorMat);
       floorMesh.position.y = -0.01;
       scene.add(floorMesh);
+      groundFloor = floorMesh;
 
       modelHeight = s.y;
-      view.dist = radius / Math.sin(((camera.fov * Math.PI) / 180) / 2) * 1.05;
+      view.theta = 0;
+      view.phi = Math.PI * 0.45;
+      view.dist = radius / Math.sin(((camera.fov * Math.PI) / 180) / 2) * 1.8;
       loadingEl.style.display = "none";
     } catch (e) {
       loadingEl.textContent = "Could not load 3D model";
@@ -200,7 +234,7 @@ export const Rig = (function () {
     setEyeAngle: (deg) => { eyeAngleDeg = deg; },
     setIdleNudge: (deg) => { idleNudgeDeg = deg; },
     setBodyTurn: (deg) => { bodyTurnDeg = deg; },
-    setWalking: (v) => { mode.walking = v; },
+    setWalking: (v, dir = 1) => { mode.walking = !!v; mode.walkDir = dir >= 0 ? 1 : -1; },
     setDancing: (v) => { mode.dancing = v; },
     setStopped: (v) => { mode.stopped = v; },
     getEyeAngle: () => eyeAngleDeg,

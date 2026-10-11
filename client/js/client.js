@@ -1,9 +1,3 @@
-// ---- Fail loudly instead of silently -------------------------------------
-// The two most common ways this breaks are (1) opening index.html directly
-// as a file instead of through the Node server, and (2) three.js failing to
-// load from the CDN. Both used to fail silently with only console errors —
-// now they show an obvious on-page message instead.
-
 const protoBanner = document.getElementById("protoBanner");
 if (location.protocol === "file:") {
   protoBanner.classList.add("show");
@@ -58,6 +52,33 @@ const MAX_HISTORY = 8;
 
 let busyExecuting = false; // true while a command sequence is playing
 let idleTimer = null;
+let musicAudio = null; // HTMLAudioElement for PLAY_MUSIC
+
+function stopMusic() {
+  if (musicAudio) {
+    try { musicAudio.pause(); musicAudio.currentTime = 0; } catch (_) {}
+    musicAudio = null;
+  }
+}
+
+function playMusic(url) {
+  stopMusic();
+  if (!url || typeof url !== "string") return;
+  // Only allow same-origin /downloads paths
+  if (!url.startsWith("/downloads/")) {
+    console.warn("PLAY_MUSIC blocked non-downloads URL:", url);
+    return;
+  }
+  musicAudio = new Audio(url);
+  musicAudio.volume = 0.9;
+  musicAudio.play().catch((err) => console.error("Music play failed:", err));
+  musicAudio.onended = () => {
+    musicAudio = null;
+    if (els.bodyState && els.bodyState.textContent === "Playing music") {
+      els.bodyState.textContent = "Idle";
+    }
+  };
+}
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -115,33 +136,43 @@ async function executeInstructions(instructions) {
       case "TURN_LEFT":
       case "TURN_RIGHT": {
         holdMs = typeof arg === "number" ? arg : DURATIONAL_DEFAULT[command];
-        const delta = command === "TURN_LEFT" ? -20 : 20;
-        Rig.setBodyTurn(Rig.getBodyTurn() + delta);
+        const delta = command === "TURN_LEFT" ? -90 : 90;
+        Rig.setBodyTurn(Rig.getBodyTurn() + delta); // keep new heading (no snap-back)
         await delay(holdMs);
-        Rig.setBodyTurn(Rig.getBodyTurn() - delta);
         break;
       }
 
-      case "WALK_FORWARD":
-      case "WALK_BACKWARD": {
-        holdMs = typeof arg === "number" ? arg : DURATIONAL_DEFAULT[command];
-        Rig.setWalking(true);
+      case "WALK_FORWARD": {
+        // Keep walking until WALK_STOP / "Vision, stop" — no auto timeout
+        Rig.setDancing(false);
+        Rig.setWalking(true, 1);
         if (els.bodyState) els.bodyState.textContent = "Walking";
-        await delay(holdMs);
+        break;
+      }
+
+      case "WALK_BACKWARD": {
+        // Turn 180° from current heading, then walk forward in the new direction
+        Rig.setDancing(false);
         Rig.setWalking(false);
+        Rig.setBodyTurn(Rig.getBodyTurn() + 180);
+        if (els.bodyState) els.bodyState.textContent = "Turning…";
+        await delay(600);
+        Rig.setWalking(true, 1);
+        if (els.bodyState) els.bodyState.textContent = "Walking";
         break;
       }
 
       case "WALK_STOP":
         Rig.setWalking(false);
+        Rig.setDancing(false);
+        if (els.bodyState) els.bodyState.textContent = "Idle";
         break;
 
       case "DANCE": {
-        holdMs = typeof arg === "number" ? arg : DURATIONAL_DEFAULT.DANCE;
+        // Keep dancing until WALK_STOP / "Vision, stop"
+        Rig.setWalking(false);
         Rig.setDancing(true);
         if (els.bodyState) els.bodyState.textContent = "Dancing";
-        await delay(holdMs);
-        Rig.setDancing(false);
         break;
       }
 
@@ -162,13 +193,29 @@ async function executeInstructions(instructions) {
         await delay(300);
         break;
 
+      case "PLAY_MUSIC": {
+        if (typeof arg === "string" && arg) {
+          playMusic(arg);
+          if (els.bodyState) els.bodyState.textContent = "Playing music";
+        }
+        break;
+      }
+
+      case "STOP_MUSIC": {
+        stopMusic();
+        break;
+      }
+
       default:
         break;
     }
   }
 
   busyExecuting = false;
-  if (els.bodyState) els.bodyState.textContent = "Idle";
+  // Continuous actions (walk/dance) keep their label until stop
+  if (els.bodyState && els.bodyState.textContent === "Acting…") {
+    els.bodyState.textContent = "Idle";
+  }
 }
 
 let lastAssistantReply = "";
