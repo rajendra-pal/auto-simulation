@@ -111,10 +111,10 @@ body {
 /* ── Caption: side toaster — appears, then fades ── */
 .caption {
   position: absolute;
-  right: 16px;
-  top: 16px;
-  left: auto;
-  transform: translateX(12px);
+  right: auto;
+  top: 12%;
+  left: 50%;
+  transform: translateX(-50%);
   max-width: min(320px, 72vw);
   padding: 12px 14px;
   border-radius: 12px;
@@ -132,7 +132,7 @@ body {
 }
 .caption.show {
   opacity: 1;
-  transform: translateX(0);
+  transform: translateX(-50%);
 }
 .caption .who {
   display: block;
@@ -226,7 +226,15 @@ body {
 }
 
 @media (max-width: 560px) {
-  .caption { top: 12px; right: 12px; max-width: min(280px, 80vw); }
+  /* .caption { top: 12px; right: 12px; max-width: min(280px, 80vw); } */
+  .caption {
+  top: 12px;
+  left: 50%;
+  right: auto;
+  width: min(420px, 80vw);
+  max-width: 80vw;
+  transform: translateX(-50%);
+}
   .mic-dock { bottom: 24px; }
   .stage-actions { bottom: 24px; }
 }
